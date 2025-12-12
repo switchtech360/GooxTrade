@@ -1,5 +1,5 @@
 
-import { Candle, Indicators, VolatilityInfo } from '../types';
+import { Candle, Indicators, VolatilityInfo, FibonacciLevels } from '../types';
 
 const calculateSMA = (closes: number[], period: number): number => {
   if (closes.length < period) return 0;
@@ -155,6 +155,79 @@ const calculateCCI = (data: Candle[], period: number = 20): number => {
     return cci;
 };
 
+// Stochastic Oscillator (14, 3, 3)
+const calculateStochastic = (data: Candle[], period: number = 14, kPeriod: number = 3, dPeriod: number = 3) => {
+    if (data.length < period + kPeriod) return { k: 50, d: 50 };
+
+    // Calculate %K
+    const kValues: number[] = [];
+    for (let i = period - 1; i < data.length; i++) {
+        const slice = data.slice(i - period + 1, i + 1);
+        const low = Math.min(...slice.map(d => d.low));
+        const high = Math.max(...slice.map(d => d.high));
+        const currentClose = data[i].close;
+
+        let k = 50;
+        if (high - low !== 0) {
+            k = ((currentClose - low) / (high - low)) * 100;
+        }
+        kValues.push(k);
+    }
+
+    // SMA of %K
+    const smoothK = calculateEMA(kValues, kPeriod); // Some use SMA, EMA is smoother
+    // SMA of smoothed %K = %D
+    const smoothD = calculateEMA(smoothK, dPeriod);
+
+    return {
+        k: smoothK.length > 0 ? smoothK[smoothK.length - 1] : 50,
+        d: smoothD.length > 0 ? smoothD[smoothD.length - 1] : 50
+    };
+};
+
+// Calculate Fibonacci Levels based on the visible range (approx last 100 candles)
+const calculateFibonacci = (data: Candle[]): FibonacciLevels => {
+    if (data.length < 50) return { level0: 0, level236: 0, level382: 0, level500: 0, level618: 0, level786: 0, level100: 0, trend: 'Up' };
+
+    // Use a lookback to determine local High/Low for plotting
+    const slice = data.slice(-100); 
+    const high = Math.max(...slice.map(c => c.high));
+    const low = Math.min(...slice.map(c => c.low));
+    
+    // Determine crude trend based on whether the High or Low is more recent
+    const highIdx = slice.findIndex(c => c.high === high);
+    const lowIdx = slice.findIndex(c => c.low === low);
+    const trend = highIdx > lowIdx ? 'Up' : 'Down'; // If High is after Low, we are in an impulse Up
+
+    const diff = high - low;
+
+    // Standard Fib Calculations
+    if (trend === 'Up') {
+        // Retracement from High downwards
+        return {
+            level0: low,
+            level236: high - (diff * 0.236),
+            level382: high - (diff * 0.382),
+            level500: high - (diff * 0.500),
+            level618: high - (diff * 0.618),
+            level786: high - (diff * 0.786),
+            level100: high,
+            trend
+        };
+    } else {
+         // Retracement from Low upwards
+         return {
+            level0: high,
+            level236: low + (diff * 0.236),
+            level382: low + (diff * 0.382),
+            level500: low + (diff * 0.500),
+            level618: low + (diff * 0.618),
+            level786: low + (diff * 0.786),
+            level100: low,
+            trend
+        };
+    }
+}
 
 export const calculateIndicators = (data: Candle[]): Indicators => {
   const closes = data.map(candle => candle.close);
@@ -170,7 +243,10 @@ export const calculateIndicators = (data: Candle[]): Indicators => {
   const bollingerBands = calculateBollingerBands(closes, 20, 2);
   const macd = calculateMACD(closes, 12, 26, 9);
   const cci = calculateCCI(data, 20);
+  const stochastic = calculateStochastic(data, 14, 3, 3);
   const currentPrice = closes.length > 0 ? closes[closes.length - 1] : 0;
+  const vol = calculateVolatility(data);
+  const fib = calculateFibonacci(data);
   
   return {
     rsi,
@@ -183,11 +259,17 @@ export const calculateIndicators = (data: Candle[]): Indicators => {
         lower: parseFloat(bollingerBands.lower.toFixed(4)),
     },
     macd: {
-        macd: parseFloat(macd.macd.toFixed(4)),
-        signal: parseFloat(macd.signal.toFixed(4)),
-        histogram: parseFloat(macd.histogram.toFixed(4)),
+        macd: parseFloat(macd.macd.toFixed(5)),
+        signal: parseFloat(macd.signal.toFixed(5)),
+        histogram: parseFloat(macd.histogram.toFixed(5)),
     },
+    stochastic: {
+        k: parseFloat(stochastic.k.toFixed(2)),
+        d: parseFloat(stochastic.d.toFixed(2))
+    },
+    atr: parseFloat(vol.atr.toFixed(5)),
     cci: parseFloat(cci.toFixed(2)),
+    fibonacci: fib
   };
 };
 

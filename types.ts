@@ -17,6 +17,17 @@ export interface Candle {
   close: number;
 }
 
+export interface FibonacciLevels {
+    level0: number;   // Low
+    level236: number;
+    level382: number;
+    level500: number;
+    level618: number;
+    level786: number;
+    level100: number; // High
+    trend: 'Up' | 'Down';
+}
+
 export interface Indicators {
   rsi: number;
   sma20: number;
@@ -32,7 +43,13 @@ export interface Indicators {
     signal: number;
     histogram: number;
   };
+  stochastic: {
+    k: number;
+    d: number;
+  };
+  atr: number;
   cci: number;
+  fibonacci: FibonacciLevels; // Added
 }
 
 export interface SignalResponse {
@@ -91,4 +108,22 @@ export interface Trade {
     outcome: 'Win' | 'Loss' | 'Breakeven' | 'Ongoing';
     notes: string;
     timestamp: number;
+}
+
+export interface BacktestResult {
+    totalTrades: number;
+    wins: number;
+    losses: number;
+    winRate: number; // percentage
+    profitFactor: number;
+    maxDrawdown: number; // percentage
+    netProfit: number;
+    trades: {
+        entryIndex: number;
+        exitIndex: number;
+        type: 'BUY' | 'SELL';
+        entryPrice: number;
+        exitPrice: number;
+        profit: number;
+    }[];
 }

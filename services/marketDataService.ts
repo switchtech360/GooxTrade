@@ -23,6 +23,14 @@ const INTERVAL_MAP: Record<Timeframe, string> = {
   '4h': '4h'
 };
 
+const SYNTHETIC_BASE_PRICES: Record<string, number> = {
+    'GBP/JPY': 191.50,
+    'USD/CAD': 1.3600,
+    'USD/JPY': 151.20,
+    'USD/CHF': 0.9050,
+    'NZD/USD': 0.5950
+};
+
 // List of API endpoints to try in order. 
 // data-api.binance.vision is often more permissive with CORS and rate limits for public data.
 const API_ENDPOINTS = [
@@ -33,15 +41,64 @@ const API_ENDPOINTS = [
 
 interface MarketDataResponse {
     data: Candle[];
-    source: 'API';
+    source: 'API' | 'Synthetic';
 }
+
+const getIntervalMs = (tf: Timeframe): number => {
+    switch(tf) {
+        case '1m': return 60 * 1000;
+        case '5m': return 5 * 60 * 1000;
+        case '15m': return 15 * 60 * 1000;
+        case '1h': return 60 * 60 * 1000;
+        case '4h': return 4 * 60 * 60 * 1000;
+        default: return 60 * 1000;
+    }
+};
 
 export const fetchMarketData = async (pair: CurrencyPair, timeframe: Timeframe, count: number): Promise<MarketDataResponse> => {
   const symbol = BINANCE_SYMBOL_MAP[pair];
   
-  // Strict check: if no symbol mapping exists, we cannot provide real live data.
+  // If no API symbol is available, generate synthetic data for demo/simulation
   if (!symbol) {
-    throw new Error(`Live data not available for ${pair}. API source required.`);
+      // console.warn(`Live data not available for ${pair}. Generating synthetic data for demo purposes.`);
+      
+      const intervalMs = getIntervalMs(timeframe);
+      const now = Date.now();
+      const candles: Candle[] = [];
+      
+      let basePrice = SYNTHETIC_BASE_PRICES[pair] || 1.0000;
+      
+      // Generate a random walk
+      const prices: number[] = [basePrice];
+      const volatility = basePrice * 0.0005; // 0.05% per period roughly
+
+      // Create a sequence
+      for (let i = 1; i < count; i++) {
+          const change = (Math.random() - 0.5) * volatility;
+          prices.push(prices[i-1] + change);
+      }
+      
+      // Map to candles (reverse order to match time)
+      for (let i = 0; i < count; i++) {
+           const time = now - ((count - 1 - i) * intervalMs);
+           const close = prices[i];
+           // Open is previous close, or close +/- small random if first
+           const open = i > 0 ? prices[i-1] : close - ((Math.random() - 0.5) * volatility);
+           
+           const range = Math.abs(open - close);
+           const high = Math.max(open, close) + (Math.random() * range);
+           const low = Math.min(open, close) - (Math.random() * range);
+           
+           candles.push({
+               timestamp: time,
+               open, high, low, close
+           });
+      }
+      
+      // Small artificial delay to mimic API fetch
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      return { data: candles, source: 'Synthetic' };
   }
 
   const interval = INTERVAL_MAP[timeframe];

@@ -1,5 +1,4 @@
-
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 import { Candle, CurrencyPair, Indicators, MarketSentiment, SignalResponse, Strategy, Timeframe, AnalysisType, FundamentalData, VolatilityInfo, ChatMessage } from "../types";
 
 const generateBasePrompt = (
@@ -118,7 +117,7 @@ Respond with a single, valid JSON object. Do not include any text, notes, or mar
 `;
 
   // Wrap the API call in the retry function
-  const response = await retry(() => ai.models.generateContent({
+  const response = await retry<GenerateContentResponse>(() => ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: prompt,
     config: {
@@ -137,7 +136,7 @@ Respond with a single, valid JSON object. Do not include any text, notes, or mar
     }
   }));
   
-  let jsonText = response.text.trim();
+  let jsonText = (response.text || "").trim();
   
   // Clean potential Markdown formatting if the model adds it despite instructions
   if (jsonText.startsWith('```json')) {
@@ -180,10 +179,10 @@ ${historyContext}
 Your task is to answer the last user question based on the original data you had. Do not generate a new signal. Keep your answer brief and to the point.
 `;
 
-  const response = await retry(() => ai.models.generateContent({
+  const response = await retry<GenerateContentResponse>(() => ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: prompt,
   }));
 
-  return response.text.trim();
+  return (response.text || "").trim();
 };

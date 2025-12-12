@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { CURRENCY_PAIRS, TIME_FRAMES, STRATEGY_ANALYSIS_MAP, ANALYSIS_TYPES } from './constants';
-import { Signal, Candle, Strategy, Timeframe, CurrencyPair, SignalResponse, Indicators, AnalysisType, FundamentalData, ChatMessage, Trade, EconomicEvent, VolatilityInfo } from './types';
+import { Signal, Candle, Strategy, Timeframe, CurrencyPair, SignalResponse, Indicators, AnalysisType, FundamentalData, ChatMessage, Trade, EconomicEvent, VolatilityInfo, BacktestResult } from './types';
 import { fetchMarketData } from './services/marketDataService';
 import { calculateIndicators, calculateVolatility } from './services/technicalAnalysisService';
 import { getTradingSignal, getFollowUpAnalysis } from './services/geminiService';
@@ -11,8 +11,9 @@ import { getMarketSentiment } from './services/sentimentService';
 import { getFundamentalData } from './services/fundamentalAnalysisService';
 import { getEconomicEvents } from './services/economicCalendarService';
 import { useLocalStorage } from './hooks/useLocalStorage';
-import { speak } from './services/voiceService';
+import { speak, announceDivergence } from './services/voiceService';
 import { downloadExtensionManifest } from './services/extensionGenerator';
+import { runBacktest } from './services/backtestService';
 
 // Components
 import ControlPanel from './components/ControlPanel';
@@ -27,13 +28,18 @@ import VolatilityMeter from './components/VolatilityMeter';
 import MultiTimeframeContext from './components/MultiTimeframeContext';
 import TradeJournal from './components/TradeJournal';
 import ExtensionGuideModal from './components/ExtensionGuideModal';
-import NetworkStatus from './components/NetworkStatus'; // Imported
+import NetworkStatus from './components/NetworkStatus';
+import BacktestPanel from './components/BacktestPanel';
+import DivergenceAlert from './components/DivergenceAlert';
+import CurrencyStrengthMeter from './components/CurrencyStrengthMeter'; 
+import RiskCalculator from './components/RiskCalculator'; 
 import { BellIcon } from './components/icons/BellIcon';
 import { CalendarIcon } from './components/icons/CalendarIcon';
 import { JournalIcon } from './components/icons/JournalIcon';
 import { SettingsIcon } from './components/icons/SettingsIcon';
 import { ChromeIcon } from './components/icons/ChromeIcon';
 import { DownloadIcon } from './components/icons/DownloadIcon';
+import { ShieldCheckIcon } from './components/icons/ShieldCheckIcon';
 
 
 const App: React.FC = () => {
@@ -43,6 +49,11 @@ const App: React.FC = () => {
   const [analysisType, setAnalysisType] = useState<AnalysisType>(ANALYSIS_TYPES[0]);
   const [availableStrategies, setAvailableStrategies] = useState(STRATEGY_ANALYSIS_MAP[analysisType]);
   const [strategy, setStrategy] = useState<Strategy>(availableStrategies[0]);
+
+  // Settings State
+  const [minConfidence, setMinConfidence] = useState<number>(75);
+  const [cooldownSeconds, setCooldownSeconds] = useState<number>(60);
+  const [lastSignalTimes, setLastSignalTimes] = useState<Record<string, number>>({});
 
   // Loading & Data State
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -55,11 +66,20 @@ const App: React.FC = () => {
   const [higherTfTrend, setHigherTfTrend] = useState('Neutral');
   const [economicEvents, setEconomicEvents] = useState<EconomicEvent[]>([]);
   
+  // Backtest State
+  const [backtestResults, setBacktestResults] = useState<BacktestResult | null>(null);
+  const [isBacktesting, setIsBacktesting] = useState(false);
+  
   // Signal & AI Chat State
   const [signalResponse, setSignalResponse] = useState<SignalResponse | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const initialWelcomeMessage = 'Welcome to GOOX TRADING BOT 2026. Configure your parameters and click "Get Signal" to begin. You can ask follow-up questions after a signal is generated.';
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  // Alerts & Modals State
+  const [divergenceEvent, setDivergenceEvent] = useState<{ type: 'Bullish' | 'Bearish', pair: string } | null>(null);
+  const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
+  const lastDivergenceRef = useRef<string>('None');
 
   // Feature State
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -90,7 +110,8 @@ const App: React.FC = () => {
   // Initial Data Load
   useEffect(() => {
     setEconomicEvents(getEconomicEvents(currencyPair));
-  },[currencyPair])
+    setBacktestResults(null); // Reset backtest on pair change
+  },[currencyPair, strategy])
 
   // PWA Install Prompt Listener
   useEffect(() => {
@@ -126,8 +147,20 @@ const App: React.FC = () => {
   }, [currencyPair, autoCyclePairs]);
 
   const handleGetSignal = useCallback(async (isInitial = true) => {
-    // If we are already loading, don't start another request (prevent overlaps)
+    // If we are already loading, don't start another request
     if (isLoading) return;
+
+    // --- COOLDOWN CHECK ---
+    const lastTime = lastSignalTimes[currencyPair] || 0;
+    const now = Date.now();
+    const elapsed = (now - lastTime) / 1000;
+    
+    // Allow if auto-refreshing (since user explicitly requested loop), but block manual button spam
+    if (isInitial && elapsed < cooldownSeconds) {
+        const remaining = Math.ceil(cooldownSeconds - elapsed);
+        setError(`Cooling period active for ${currencyPair}. Please wait ${remaining}s to avoid over-trading.`);
+        return; 
+    }
 
     setIsLoading(true);
     if (isInitial) {
@@ -138,7 +171,7 @@ const App: React.FC = () => {
     
     try {
       // Fetch Real Data (async)
-      const response = await fetchMarketData(currencyPair, timeframe, 100);
+      const response = await fetchMarketData(currencyPair, timeframe, 300);
       const data = response.data;
 
       // Fetch Higher Timeframe Data
@@ -159,6 +192,21 @@ const App: React.FC = () => {
       }
       
       setIndicators(calculatedIndicators);
+      
+      // DIVERGENCE ALERT LOGIC
+      if (calculatedIndicators.divergence !== 'None') {
+          const isNewDivergence = calculatedIndicators.divergence !== lastDivergenceRef.current;
+          
+          if (isNewDivergence || isInitial) {
+              setDivergenceEvent({ 
+                  type: calculatedIndicators.divergence as 'Bullish' | 'Bearish', 
+                  pair: currencyPair 
+              });
+              announceDivergence(calculatedIndicators.divergence, currencyPair);
+          }
+      }
+      lastDivergenceRef.current = calculatedIndicators.divergence;
+
       setVolatility(calculatedVolatility);
       setHigherTfTrend(htfTrend);
       
@@ -174,9 +222,19 @@ const App: React.FC = () => {
         higherTfTrend
       );
 
+      // --- MINIMUM CONFIDENCE CHECK ---
+      if (responseSignal.confidence < minConfidence) {
+          responseSignal.signal = 'HOLD';
+          responseSignal.reasoning = `[SAFETY FILTER] AI generated a signal but Confidence (${responseSignal.confidence}%) was below your threshold of ${minConfidence}%. Market conditions may be too ambiguous.`;
+          // We keep the confidence score visible so user sees it was low
+      }
+
       setSignalResponse(responseSignal);
       setChatHistory([{ role: 'assistant', content: responseSignal.reasoning }]);
       setLastUpdated(new Date());
+
+      // Update cooldown timer
+      setLastSignalTimes(prev => ({...prev, [currencyPair]: Date.now()}));
 
       speak(responseSignal.signal, currencyPair);
 
@@ -189,34 +247,41 @@ const App: React.FC = () => {
       // Handle Cycle Logic
       if (autoCyclePairs) {
         const activePairs = CURRENCY_PAIRS.filter(pair => getSessionStates(pair).some(session => session.isActive));
-        // Fallback to all pairs if no specific session is active
         const pairsToCycle = activePairs.length > 0 ? activePairs : CURRENCY_PAIRS;
 
         const currentIndex = pairsToCycle.indexOf(currencyPair);
         const nextIndex = (currentIndex === -1) ? 0 : (currentIndex + 1) % pairsToCycle.length;
         const nextPair = pairsToCycle[nextIndex];
 
-        // Schedule the pair change. The useEffect hook will detect the change and trigger the next analysis.
         setTimeout(() => {
-             // Only change if auto-cycle is still enabled
              if (autoCyclePairs) {
                 setCurrencyPair(nextPair);
              }
-        }, 5000); // 5 seconds display time before switching
+        }, 5000); 
       }
 
     } catch (err) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setError(errorMessage);
-      setMarketData([]); // Clear old data so we don't show stale info on error
-      setIndicators(null); // Clear indicators
-      setSignalResponse(null); // Clear old signals
+      setMarketData([]); 
+      setIndicators(null); 
+      setSignalResponse(null); 
       setChatHistory([{ role: 'assistant', content: `⚠️ Error: ${errorMessage}` }]);
     } finally {
       setIsLoading(false);
     }
-  }, [currencyPair, timeframe, strategy, analysisType, notificationsEnabled, autoCyclePairs]);
+  }, [currencyPair, timeframe, strategy, analysisType, notificationsEnabled, autoCyclePairs, minConfidence, cooldownSeconds, lastSignalTimes]);
+
+  const handleRunBacktest = useCallback(() => {
+    if (marketData.length === 0) return;
+    setIsBacktesting(true);
+    setTimeout(() => {
+        const results = runBacktest(marketData, strategy);
+        setBacktestResults(results);
+        setIsBacktesting(false);
+    }, 500);
+  }, [marketData, strategy]);
 
   const handleSendMessage = useCallback(async (message: string) => {
     const newHistory: ChatMessage[] = [...chatHistory, { role: 'user', content: message }];
@@ -265,7 +330,24 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-2 sm:p-4 lg:p-6 pb-20 sm:pb-4">
+    <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col items-center p-2 sm:p-4 lg:p-6 pb-20 sm:pb-4 relative">
+      {/* Alert Overlay */}
+      {divergenceEvent && (
+        <DivergenceAlert 
+            type={divergenceEvent.type} 
+            pair={divergenceEvent.pair} 
+            onClose={() => setDivergenceEvent(null)} 
+        />
+      )}
+      
+      {/* Risk Calculator Modal */}
+      <RiskCalculator 
+        isOpen={isRiskModalOpen} 
+        onClose={() => setIsRiskModalOpen(false)} 
+        currentPrice={indicators?.currentPrice || 0}
+        pair={currencyPair}
+      />
+
       <div className="w-full max-w-screen-2xl mx-auto">
         <header className="flex justify-between items-center mb-4 sm:mb-6">
           <div className="text-center sm:text-left">
@@ -273,8 +355,15 @@ const App: React.FC = () => {
             <p className="text-gray-400 mt-1 text-[10px] sm:text-base">Advanced Market Analysis</p>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
-             {/* Network Status Added Here */}
              <NetworkStatus />
+
+             <button
+                onClick={() => setIsRiskModalOpen(true)}
+                className="p-2 rounded-full bg-gray-800 hover:bg-gray-700 text-cyan-400 border border-gray-700 transition-colors"
+                title="Risk Calculator"
+             >
+                 <ShieldCheckIcon />
+             </button>
 
              {showInstallButton && (
                 <button
@@ -341,11 +430,22 @@ const App: React.FC = () => {
                         onGetSignal={() => handleGetSignal(true)} isLoading={isLoading || isStreaming}
                         autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh}
                         autoCyclePairs={autoCyclePairs} setAutoCyclePairs={setAutoCyclePairs}
+                        minConfidence={minConfidence} setMinConfidence={setMinConfidence}
+                        cooldownSeconds={cooldownSeconds} setCooldownSeconds={setCooldownSeconds}
                     />
                 )}
                 {activeTab === 'journal' && <TradeJournal trades={trades} setTrades={setTrades} />}
                 {activeTab === 'calendar' && <EconomicCalendar events={economicEvents} />}
               </div>
+            </div>
+            
+            <div className="h-[300px] lg:h-auto lg:flex-grow">
+                 <BacktestPanel 
+                    results={backtestResults} 
+                    isRunning={isBacktesting} 
+                    onRunBacktest={handleRunBacktest}
+                    strategy={strategy}
+                 />
             </div>
           </div>
 
@@ -356,11 +456,10 @@ const App: React.FC = () => {
                  <IndicatorDisplay indicators={indicators} />
               </div>
             </div>
-            {/* Mobile Indicator View (Simplified) */}
+            {/* Mobile Indicator View */}
             <div className="md:hidden">
                 <IndicatorDisplay indicators={indicators} />
             </div>
-            {/* Pass error prop to chart to display message */}
             <PriceChart data={marketData} currencyPair={currencyPair} signalResponse={signalResponse} indicators={indicators} error={error} />
           </div>
           
@@ -375,10 +474,14 @@ const App: React.FC = () => {
             />
             <div className="grid grid-cols-2 gap-6">
                 <MultiTimeframeContext trend={higherTfTrend} />
-                <VolatilityMeter volatility={volatility} />
+                <CurrencyStrengthMeter pair={currencyPair} indicators={indicators} />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-6">
+               <VolatilityMeter volatility={volatility} />
+               <TradingSession currencyPair={currencyPair} />
             </div>
             <FundamentalDisplay fundamentalData={fundamentalData} />
-            <TradingSession currencyPair={currencyPair} />
           </div>
         </main>
         
