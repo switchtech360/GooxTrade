@@ -9,7 +9,8 @@ const sentimentData: Record<string, MarketSentiment> = {
     'USD/JPY': { sentiment: 'Bullish', keywords: ['BoJ policy divergence', 'yield curve control', 'importer demand'] },
     'USD/CHF': { sentiment: 'Neutral', keywords: ['safe-haven flows', 'SNB policy', 'risk sentiment'] },
     'NZD/USD': { sentiment: 'Bearish', keywords: ['global growth concerns', 'RBNZ stance', 'commodity prices'] },
-    'BTC/USD': { sentiment: 'Bullish', keywords: ['institutional adoption', 'halving cycle', 'positive ETF flows'] }
+    'BTC/USD': { sentiment: 'Bullish', keywords: ['institutional adoption', 'halving cycle', 'positive ETF flows'] },
+    'XAU/USD': { sentiment: 'Bullish', keywords: ['Safe-haven demand', 'Geopolitical tension', 'Central bank buying'] }
 };
 
 // In a real application, this would fetch data from news APIs (e.g., NewsAPI, Bloomberg)

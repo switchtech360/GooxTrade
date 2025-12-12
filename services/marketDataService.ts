@@ -1,64 +1,79 @@
 
 import { Candle, CurrencyPair, Timeframe } from '../types';
 
-// In a real application, this would fetch data from a live API (e.g., WebSocket or REST).
-// For this demo, we simulate realistic-looking market data.
-
-export const fetchMarketData = (pair: CurrencyPair, timeframe: Timeframe, count: number): Candle[] => {
-  const data: Candle[] = [];
-  let lastClose = getBasePrice(pair);
-  const volatility = getVolatility(pair);
-  const now = Date.now();
-  const timeInterval = getTimeInterval(timeframe);
-
-  for (let i = 0; i < count; i++) {
-    const timestamp = now - (count - 1 - i) * timeInterval;
-    const open = lastClose * (1 + (Math.random() - 0.5) * volatility * 0.1);
-    const high = Math.max(open, lastClose) * (1 + Math.random() * volatility);
-    const low = Math.min(open, lastClose) * (1 - Math.random() * volatility);
-    const close = low + Math.random() * (high - low);
-
-    data.push({ timestamp, open, high, low, close });
-    lastClose = close;
-  }
-  return data;
+// Map valid pairs to Binance symbols. 
+// Note: Limited to pairs available on public crypto APIs (Binance) as proxies.
+const BINANCE_SYMBOL_MAP: Record<string, string> = {
+  'BTC/USD': 'BTCUSDT',
+  'XAU/USD': 'PAXGUSDT', // Paxos Gold as proxy
+  'EUR/USD': 'EURUSDT',
+  'GBP/JPY': '', // Not available on public Binance Spot
+  'AUD/USD': 'AUDUSDT',
+  'USD/CAD': '', // Not available
+  'USD/JPY': '', // Not available
+  'USD/CHF': '', // Not available
+  'NZD/USD': ''  // Not available
 };
 
-const getBasePrice = (pair: CurrencyPair): number => {
-  switch (pair) {
-    case 'EUR/USD': return 1.08;
-    case 'GBP/JPY': return 201.50;
-    case 'AUD/USD': return 0.66;
-    case 'USD/CAD': return 1.37;
-    case 'USD/JPY': return 157.00;
-    case 'USD/CHF': return 0.91;
-    case 'NZD/USD': return 0.61;
-    case 'BTC/USD': return 65000;
-    default: return 1.0;
-  }
+const INTERVAL_MAP: Record<Timeframe, string> = {
+  '1m': '1m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '1h',
+  '4h': '4h'
 };
 
-const getVolatility = (pair: CurrencyPair): number => {
-    switch (pair) {
-        case 'EUR/USD': return 0.001;
-        case 'GBP/JPY': return 0.005;
-        case 'AUD/USD': return 0.002;
-        case 'USD/CAD': return 0.0015;
-        case 'USD/JPY': return 0.003;
-        case 'USD/CHF': return 0.001;
-        case 'NZD/USD': return 0.002;
-        case 'BTC/USD': return 0.02;
-        default: return 0.002;
-    }
+interface MarketDataResponse {
+    data: Candle[];
+    source: 'API';
 }
 
-const getTimeInterval = (timeframe: Timeframe): number => {
-    switch (timeframe) {
-        case '1m': return 60 * 1000;
-        case '5m': return 5 * 60 * 1000;
-        case '15m': return 15 * 60 * 1000;
-        case '1h': return 60 * 60 * 1000;
-        case '4h': return 4 * 60 * 60 * 1000;
-        default: return 5 * 60 * 1000;
-    }
-}
+export const fetchMarketData = async (pair: CurrencyPair, timeframe: Timeframe, count: number): Promise<MarketDataResponse> => {
+  const symbol = BINANCE_SYMBOL_MAP[pair];
+  
+  // Strict check: if no symbol mapping exists, we cannot provide real live data.
+  if (!symbol) {
+    throw new Error(`Live data not available for ${pair}. API source required.`);
+  }
+
+  const interval = INTERVAL_MAP[timeframe];
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for market data
+
+  try {
+      const response = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${count}`, {
+          signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        throw new Error(`Data Provider Error: ${response.status}`);
+      }
+
+      const rawData = await response.json();
+      
+      if (!Array.isArray(rawData)) {
+          throw new Error('Invalid data format received from provider.');
+      }
+
+      // Binance format: [open_time, open, high, low, close, volume, close_time, ...]
+      const candles = rawData.map((d: any) => ({
+        timestamp: d[0],
+        open: parseFloat(d[1]),
+        high: parseFloat(d[2]),
+        low: parseFloat(d[3]),
+        close: parseFloat(d[4])
+      }));
+
+      if (candles.length === 0) {
+          throw new Error('Provider returned no data for this timeframe.');
+      }
+
+      return { data: candles, source: 'API' };
+
+  } catch (error) {
+      clearTimeout(timeoutId);
+      // Re-throw exact error to be displayed in UI
+      throw error;
+  }
+};

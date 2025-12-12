@@ -21,6 +21,7 @@ export interface Indicators {
   rsi: number;
   sma20: number;
   currentPrice: number;
+  divergence: 'Bullish' | 'Bearish' | 'None';
   bollingerBands: {
     upper: number;
     middle: number;

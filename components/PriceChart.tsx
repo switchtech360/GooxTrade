@@ -1,15 +1,17 @@
 
-import React, { useEffect, useRef, useState } from 'react';
-import { createChart, IChartApi, ISeriesApi, UTCTimestamp, PriceLineOptions, IPriceLine } from 'lightweight-charts';
-import { Candle, CurrencyPair, SignalResponse } from '../types';
+import React, { useEffect, useRef } from 'react';
+import { createChart, IChartApi, ISeriesApi, UTCTimestamp, PriceLineOptions, IPriceLine, SeriesMarker } from 'lightweight-charts';
+import { Candle, CurrencyPair, SignalResponse, Indicators } from '../types';
 
 interface PriceChartProps {
   data: Candle[];
   currencyPair: CurrencyPair;
   signalResponse: SignalResponse | null;
+  indicators: Indicators | null;
+  error?: string | null;
 }
 
-const PriceChart: React.FC<PriceChartProps> = ({ data, currencyPair, signalResponse }) => {
+const PriceChart: React.FC<PriceChartProps> = ({ data, currencyPair, signalResponse, indicators, error }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -49,12 +51,30 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, currencyPair, signalRespo
               open: candle.open, high: candle.high, low: candle.low, close: candle.close,
             }));
             candlestickSeriesRef.current.setData(formattedData);
+            
+            // Add Divergence Markers
+            if (indicators && indicators.divergence !== 'None') {
+                const lastTime = formattedData[formattedData.length - 1].time;
+                const marker: SeriesMarker<UTCTimestamp> = {
+                    time: lastTime,
+                    position: indicators.divergence === 'Bullish' ? 'belowBar' : 'aboveBar',
+                    color: indicators.divergence === 'Bullish' ? '#22c55e' : '#ef4444',
+                    shape: indicators.divergence === 'Bullish' ? 'arrowUp' : 'arrowDown',
+                    text: `${indicators.divergence} Div`,
+                    size: 2
+                };
+                candlestickSeriesRef.current.setMarkers([marker]);
+            } else {
+                candlestickSeriesRef.current.setMarkers([]);
+            }
+
             chartRef.current?.timeScale().fitContent();
         } else {
             candlestickSeriesRef.current.setData([]);
+            candlestickSeriesRef.current.setMarkers([]);
         }
     }
-  }, [data]);
+  }, [data, indicators]);
 
   useEffect(() => {
       const series = candlestickSeriesRef.current;
@@ -93,10 +113,17 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, currencyPair, signalRespo
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold text-white">Price Chart: {currencyPair}</h2>
       </div>
-      <div ref={chartContainerRef} className="w-full h-[350px]">
+      <div ref={chartContainerRef} className="w-full h-[350px] relative">
         {data.length === 0 && (
-          <div className="flex items-center justify-center h-full text-gray-500">
-             <p>Market data chart will appear here.</p>
+          <div className="absolute inset-0 flex items-center justify-center text-gray-500 bg-gray-800/80 z-10">
+             {error ? (
+                <div className="text-center p-4">
+                    <p className="text-red-400 font-bold mb-1">No Live Data Available</p>
+                    <p className="text-xs text-gray-400">{error}</p>
+                </div>
+             ) : (
+                <p>Market data chart will appear here.</p>
+             )}
           </div>
         )}
       </div>

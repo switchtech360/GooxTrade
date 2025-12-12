@@ -18,29 +18,90 @@ const calculateEMA = (closes: number[], period: number): number[] => {
     return emaArray;
 };
 
-const calculateRSI = (closes: number[], period: number = 14): number => {
-  if (closes.length < period + 1) return 50; // Return neutral if not enough data
+const calculateRSIValues = (closes: number[], period: number = 14): number[] => {
+    if (closes.length < period + 1) return new Array(closes.length).fill(50);
+    
+    const rsiValues: number[] = new Array(closes.length).fill(50);
+    let gains = 0;
+    let losses = 0;
 
-  let gains = 0;
-  let losses = 0;
-
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const diff = closes[i] - closes[i - 1];
-    if (diff > 0) {
-      gains += diff;
-    } else {
-      losses -= diff; // losses are positive
+    // Initial RSI calculation
+    for (let i = 1; i <= period; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff > 0) gains += diff;
+        else losses -= diff;
     }
-  }
+    
+    let avgGain = gains / period;
+    let avgLoss = losses / period;
+    
+    rsiValues[period] = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
 
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
+    // Smoothed RSI calculation for the rest
+    for (let i = period + 1; i < closes.length; i++) {
+        const diff = closes[i] - closes[i - 1];
+        const gain = diff > 0 ? diff : 0;
+        const loss = diff < 0 ? -diff : 0;
+        
+        avgGain = ((avgGain * (period - 1)) + gain) / period;
+        avgLoss = ((avgLoss * (period - 1)) + loss) / period;
+        
+        const rs = avgGain / avgLoss;
+        rsiValues[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + rs));
+    }
 
-  if (avgLoss === 0) return 100;
-
-  const rs = avgGain / avgLoss;
-  return 100 - (100 / (1 + rs));
+    return rsiValues;
 };
+
+const detectDivergence = (closes: number[], rsiValues: number[], lows: number[], highs: number[], window: number = 20): 'Bullish' | 'Bearish' | 'None' => {
+    if (closes.length < window || rsiValues.length < window) return 'None';
+    
+    const currentIdx = closes.length - 1;
+    const currentClose = closes[currentIdx];
+    const currentRSI = rsiValues[currentIdx];
+    
+    // Look back 'window' bars, excluding the current one to find previous pivot
+    const startIdx = Math.max(0, currentIdx - window);
+    let minLow = Number.MAX_VALUE;
+    let minLowIdx = -1;
+    let maxHigh = Number.MIN_VALUE;
+    let maxHighIdx = -1;
+
+    for(let i = startIdx; i < currentIdx; i++) {
+        if(lows[i] < minLow) {
+            minLow = lows[i];
+            minLowIdx = i;
+        }
+        if(highs[i] > maxHigh) {
+            maxHigh = highs[i];
+            maxHighIdx = i;
+        }
+    }
+    
+    // Check Bullish Divergence: Price makes Lower Low (or equal), but RSI makes Higher Low
+    if (minLowIdx !== -1) {
+        if (currentClose <= minLow) { 
+            // Current price is lower/equal to the lowest low of the window
+            // Check if RSI is HIGHER than the RSI at that previous lowest point
+            if (currentRSI > rsiValues[minLowIdx] && rsiValues[minLowIdx] < 40) { // Added threshold for validity
+                 return 'Bullish';
+            }
+        }
+    }
+
+    // Check Bearish Divergence: Price makes Higher High (or equal), but RSI makes Lower High
+    if (maxHighIdx !== -1) {
+        if (currentClose >= maxHigh) {
+             // Current price is higher/equal to the highest high of the window
+             // Check if RSI is LOWER than the RSI at that previous highest point
+             if (currentRSI < rsiValues[maxHighIdx] && rsiValues[maxHighIdx] > 60) { // Added threshold for validity
+                 return 'Bearish';
+             }
+        }
+    }
+    
+    return 'None';
+}
 
 const calculateBollingerBands = (closes: number[], period: number = 20, stdDev: number = 2) => {
     if (closes.length < period) return { upper: 0, middle: 0, lower: 0 };
@@ -97,7 +158,14 @@ const calculateCCI = (data: Candle[], period: number = 20): number => {
 
 export const calculateIndicators = (data: Candle[]): Indicators => {
   const closes = data.map(candle => candle.close);
-  const rsi = calculateRSI(closes, 14);
+  const lows = data.map(candle => candle.low);
+  const highs = data.map(candle => candle.high);
+  
+  const rsiValues = calculateRSIValues(closes, 14);
+  const rsi = rsiValues.length > 0 ? parseFloat(rsiValues[rsiValues.length - 1].toFixed(2)) : 50;
+  
+  const divergence = detectDivergence(closes, rsiValues, lows, highs, 15);
+  
   const sma20 = calculateSMA(closes, 20);
   const bollingerBands = calculateBollingerBands(closes, 20, 2);
   const macd = calculateMACD(closes, 12, 26, 9);
@@ -105,9 +173,10 @@ export const calculateIndicators = (data: Candle[]): Indicators => {
   const currentPrice = closes.length > 0 ? closes[closes.length - 1] : 0;
   
   return {
-    rsi: parseFloat(rsi.toFixed(2)),
+    rsi,
     sma20: parseFloat(sma20.toFixed(4)),
     currentPrice: parseFloat(currentPrice.toFixed(4)),
+    divergence,
     bollingerBands: {
         upper: parseFloat(bollingerBands.upper.toFixed(4)),
         middle: parseFloat(bollingerBands.middle.toFixed(4)),

@@ -1,10 +1,11 @@
 
 import React, { useState } from 'react';
-import { CURRENCY_PAIRS, TIME_FRAMES, ANALYSIS_TYPES } from '../constants';
+import { CURRENCY_PAIRS, TIME_FRAMES, ANALYSIS_TYPES, PAIR_RECOMMENDATIONS } from '../constants';
 import { CurrencyPair, Timeframe, Strategy, AnalysisType } from '../types';
 import { LoadingSpinner } from './icons/LoadingSpinner';
 import { HelpIcon } from './icons/HelpIcon';
 import { ChromeIcon } from './icons/ChromeIcon';
+import { LightBulbIcon } from './icons/LightBulbIcon';
 import StrategyInfoModal from './StrategyInfoModal';
 import AnalysisInfoModal from './AnalysisInfoModal';
 import { downloadExtensionManifest } from '../services/extensionGenerator';
@@ -39,6 +40,18 @@ const ControlPanel: React.FC<ControlPanelProps> = (props) => {
 
   const commonSelectClass = "w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white focus:ring-cyan-500 focus:border-cyan-500 transition duration-200 disabled:opacity-50";
   const commonLabelClass = "block text-sm font-medium text-gray-300";
+  
+  const recommendation = PAIR_RECOMMENDATIONS[currencyPair];
+
+  const applyRecommendation = () => {
+      if (recommendation) {
+          setAnalysisType(recommendation.analysis);
+          // We set strategy in a timeout to allow the parent App component to update availableStrategies first based on analysisType
+          setTimeout(() => {
+            setStrategy(recommendation.strategy);
+          }, 50);
+      }
+  };
 
   return (
     <>
@@ -51,6 +64,31 @@ const ControlPanel: React.FC<ControlPanelProps> = (props) => {
                 {CURRENCY_PAIRS.map((pair) => <option key={pair} value={pair}>{pair}</option>)}
               </select>
             </div>
+            
+            {/* Recommendation Box */}
+            {recommendation && (
+              <div className="bg-cyan-900/20 border border-cyan-800 rounded-lg p-3 animate-fade-in">
+                <div className="flex items-center gap-2 mb-2">
+                    <span className="text-cyan-400"><LightBulbIcon /></span>
+                    <h3 className="text-sm font-bold text-cyan-300">Best Config for {currencyPair}</h3>
+                </div>
+                <div className="text-xs space-y-1 text-gray-300">
+                    <p><span className="text-gray-400">Strategy:</span> <span className="font-semibold text-white">{recommendation.strategy}</span></p>
+                    <p><span className="text-gray-400">Analysis:</span> <span className="font-semibold text-white">{recommendation.analysis}</span></p>
+                    <p><span className="text-gray-400">Key Ind:</span> {recommendation.indicators}</p>
+                    <p className="italic text-cyan-200/70 mt-1 leading-tight">"{recommendation.reason}"</p>
+                </div>
+                {(strategy !== recommendation.strategy || analysisType !== recommendation.analysis) && (
+                    <button 
+                        onClick={applyRecommendation}
+                        disabled={isLoading}
+                        className="w-full mt-2 bg-cyan-800/50 hover:bg-cyan-700/50 text-cyan-400 text-xs py-1.5 rounded border border-cyan-700/50 transition-colors uppercase font-bold tracking-wide"
+                    >
+                        Apply Settings
+                    </button>
+                )}
+              </div>
+            )}
             
             <div>
               <label htmlFor="timeframe" className={`${commonLabelClass} mb-2`}>Timeframe</label>

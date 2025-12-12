@@ -52,6 +52,12 @@ const fundamentalDb: Record<CurrencyPair, FundamentalData> = {
         gdpOutlook: 'Macro correlation',
         inflationaryPressure: 'Hedge asset debate',
         keyReports: 'SEC News, ETF Flows',
+    },
+    'XAU/USD': {
+        interestRateDifferential: 'N/A (Non-yielding)',
+        gdpOutlook: 'Global Growth Proxy',
+        inflationaryPressure: 'Hedge against inflation',
+        keyReports: 'US CPI, Fed Rate Decision',
     }
 };
 

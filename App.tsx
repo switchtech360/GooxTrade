@@ -57,7 +57,7 @@ const App: React.FC = () => {
   // Signal & AI Chat State
   const [signalResponse, setSignalResponse] = useState<SignalResponse | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-  const initialWelcomeMessage = 'Welcome to the AI Trading Signal Assistant. Configure your parameters and click "Get Signal" to begin. You can ask follow-up questions after a signal is generated. This tool is for educational purposes only.';
+  const initialWelcomeMessage = 'Welcome to GOOX TRADING BOT 2026. Configure your parameters and click "Get Signal" to begin. You can ask follow-up questions after a signal is generated.';
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   // Feature State
@@ -105,15 +105,29 @@ const App: React.FC = () => {
   // Auto-Refresh Effect
   useEffect(() => {
     let interval: number;
-    if (autoRefresh && marketData.length > 0) {
+    if (autoRefresh && marketData.length > 0 && !isLoading) {
       interval = window.setInterval(() => {
-        handleGetSignal();
+        handleGetSignal(false); // false = not initial, just refresh
       }, 30000);
     }
     return () => clearInterval(interval);
-  }, [autoRefresh, marketData]);
+  }, [autoRefresh, marketData, isLoading]);
+
+  // Auto-Cycle Trigger Effect
+  useEffect(() => {
+    if (autoCyclePairs && !isLoading && !isStreaming) {
+      // Small debounce/delay to ensure state is settled before triggering new analysis
+      const timer = setTimeout(() => {
+        handleGetSignal(true);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [currencyPair, autoCyclePairs]);
 
   const handleGetSignal = useCallback(async (isInitial = true) => {
+    // If we are already loading, don't start another request (prevent overlaps)
+    if (isLoading) return;
+
     setIsLoading(true);
     if (isInitial) {
         setChatHistory([]);
@@ -122,18 +136,30 @@ const App: React.FC = () => {
     setError(null);
     
     try {
-      const data = fetchMarketData(currencyPair, timeframe, 100);
-      const higherTfData = fetchMarketData(currencyPair, '4h', 50);
+      // Fetch Real Data (async)
+      const response = await fetchMarketData(currencyPair, timeframe, 100);
+      const data = response.data;
+
+      // Fetch Higher Timeframe Data
+      const htfResponse = await fetchMarketData(currencyPair, '4h', 50);
+      const higherTfData = htfResponse.data;
+      
       setMarketData(data);
 
       const calculatedIndicators = calculateIndicators(data);
       const calculatedVolatility = calculateVolatility(data);
-      const sma20_htf = calculateIndicators(higherTfData).sma20;
-      const currentPrice_htf = higherTfData[higherTfData.length - 1].close;
+      
+      // Calculate Higher TF Trend
+      let htfTrend = 'Neutral';
+      if (higherTfData && higherTfData.length > 20) {
+          const sma20_htf = calculateIndicators(higherTfData).sma20;
+          const currentPrice_htf = higherTfData[higherTfData.length - 1].close;
+          htfTrend = currentPrice_htf > sma20_htf ? 'Uptrend' : 'Downtrend';
+      }
       
       setIndicators(calculatedIndicators);
       setVolatility(calculatedVolatility);
-      setHigherTfTrend(currentPrice_htf > sma20_htf ? 'Uptrend' : 'Downtrend');
+      setHigherTfTrend(htfTrend);
       
       const fundamentalInfo = getFundamentalData(currencyPair);
       setFundamentalData(fundamentalInfo);
@@ -141,41 +167,51 @@ const App: React.FC = () => {
       const sessionImpact = getActiveSessionImpactDescription(currencyPair);
       const marketSentiment = getMarketSentiment(currencyPair);
       
-      const response = await getTradingSignal(
+      const responseSignal = await getTradingSignal(
         aiRef.current, currencyPair, timeframe, strategy, analysisType, data, calculatedIndicators,
         sessionImpact, marketSentiment, fundamentalInfo, calculatedVolatility,
         higherTfTrend
       );
 
-      setSignalResponse(response);
-      setChatHistory([{ role: 'assistant', content: response.reasoning }]);
+      setSignalResponse(responseSignal);
+      setChatHistory([{ role: 'assistant', content: responseSignal.reasoning }]);
       setLastUpdated(new Date());
 
-      speak(response.signal, currencyPair);
+      speak(responseSignal.signal, currencyPair);
 
       if (notificationsEnabled && isInitial) {
-        new Notification('New AI Trading Signal', {
-          body: `${currencyPair}: ${response.signal} (Confidence: ${response.confidence}%)`,
+        new Notification('New Trading Signal', {
+          body: `${currencyPair}: ${responseSignal.signal} (Confidence: ${responseSignal.confidence}%)`,
         });
       }
 
+      // Handle Cycle Logic
       if (autoCyclePairs) {
         const activePairs = CURRENCY_PAIRS.filter(pair => getSessionStates(pair).some(session => session.isActive));
-        if (activePairs.length > 0) {
-            const currentIndexInActiveList = activePairs.indexOf(currencyPair);
-            const nextIndex = (currentIndexInActiveList === -1) ? 0 : (currentIndexInActiveList + 1) % activePairs.length;
-            const nextPair = activePairs[nextIndex];
-            setTimeout(() => {
+        // Fallback to all pairs if no specific session is active
+        const pairsToCycle = activePairs.length > 0 ? activePairs : CURRENCY_PAIRS;
+
+        const currentIndex = pairsToCycle.indexOf(currencyPair);
+        const nextIndex = (currentIndex === -1) ? 0 : (currentIndex + 1) % pairsToCycle.length;
+        const nextPair = pairsToCycle[nextIndex];
+
+        // Schedule the pair change. The useEffect hook will detect the change and trigger the next analysis.
+        setTimeout(() => {
+             // Only change if auto-cycle is still enabled
+             if (autoCyclePairs) {
                 setCurrencyPair(nextPair);
-            }, 2000);
-        }
+             }
+        }, 5000); // 5 seconds display time before switching
       }
 
     } catch (err) {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
-      setError(`Failed to get signal. ${errorMessage}`);
-      setChatHistory([{ role: 'assistant', content: `Error: Could not retrieve analysis.` }]);
+      setError(errorMessage);
+      setMarketData([]); // Clear old data so we don't show stale info on error
+      setIndicators(null); // Clear indicators
+      setSignalResponse(null); // Clear old signals
+      setChatHistory([{ role: 'assistant', content: `⚠️ Error: ${errorMessage}` }]);
     } finally {
       setIsLoading(false);
     }
@@ -232,8 +268,8 @@ const App: React.FC = () => {
       <div className="w-full max-w-screen-2xl mx-auto">
         <header className="flex justify-between items-center mb-4 sm:mb-6">
           <div className="text-center sm:text-left">
-            <h1 className="text-xl sm:text-4xl font-bold text-cyan-400 leading-tight">AI Trading Bot</h1>
-            <p className="text-gray-400 mt-1 text-[10px] sm:text-base">Gemini-Powered Signals</p>
+            <h1 className="text-xl sm:text-4xl font-bold text-cyan-400 leading-tight">GOOX TRADING BOT 2026</h1>
+            <p className="text-gray-400 mt-1 text-[10px] sm:text-base">Advanced Market Analysis</p>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
              {showInstallButton && (
@@ -320,7 +356,8 @@ const App: React.FC = () => {
             <div className="md:hidden">
                 <IndicatorDisplay indicators={indicators} />
             </div>
-            <PriceChart data={marketData} currencyPair={currencyPair} signalResponse={signalResponse} />
+            {/* Pass error prop to chart to display message */}
+            <PriceChart data={marketData} currencyPair={currencyPair} signalResponse={signalResponse} indicators={indicators} error={error} />
           </div>
           
           <div className="lg:col-span-3 flex flex-col gap-6 order-3">
@@ -341,8 +378,13 @@ const App: React.FC = () => {
           </div>
         </main>
         
-        <footer className="text-center mt-8 text-gray-500 text-xs sm:text-sm pb-6">
+        <footer className="text-center mt-8 text-gray-500 text-xs sm:text-sm pb-6 flex flex-col items-center gap-2">
           <p><strong>Disclaimer:</strong> Educational purposes only. Not financial advice.</p>
+          <div className="mt-2 pt-4 border-t border-gray-800 w-full max-w-md">
+            <p className="text-gray-400 font-semibold mb-1">Trademark owned by <span className="text-cyan-400">GooxTrader</span></p>
+            <p className="text-[10px] text-gray-500">Designed by staysafelite</p>
+            <p className="text-xs text-cyan-600/70 font-mono mt-1 tracking-wider">+2348054240542 | +2348145144058</p>
+          </div>
         </footer>
       </div>
       <ExtensionGuideModal isOpen={isExtensionModalOpen} onClose={() => setIsExtensionModalOpen(false)} />

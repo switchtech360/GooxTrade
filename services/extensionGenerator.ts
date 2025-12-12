@@ -2,7 +2,7 @@
 export const downloadExtensionManifest = () => {
   const manifest = {
     "manifest_version": 3,
-    "name": "AI Trading Signal Assistant",
+    "name": "GOOX TRADING BOT 2026",
     "version": "1.0",
     "description": "AI-powered trading signals overlay for Pocket Option and Quotex.",
     "side_panel": {
@@ -38,6 +38,6 @@ export const downloadExtensionManifest = () => {
     "3. Open Chrome and go to chrome://extensions\n" +
     "4. Enable 'Developer mode' (top right).\n" +
     "5. Click 'Load unpacked' and select your build folder.\n\n" +
-    "You can now open the AI Bot in the Chrome Side Panel while trading!"
+    "You can now open the GOOX TRADING BOT in the Chrome Side Panel while trading!"
   );
 };
