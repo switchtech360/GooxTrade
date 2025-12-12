@@ -27,6 +27,7 @@ import VolatilityMeter from './components/VolatilityMeter';
 import MultiTimeframeContext from './components/MultiTimeframeContext';
 import TradeJournal from './components/TradeJournal';
 import ExtensionGuideModal from './components/ExtensionGuideModal';
+import NetworkStatus from './components/NetworkStatus'; // Imported
 import { BellIcon } from './components/icons/BellIcon';
 import { CalendarIcon } from './components/icons/CalendarIcon';
 import { JournalIcon } from './components/icons/JournalIcon';
@@ -272,6 +273,9 @@ const App: React.FC = () => {
             <p className="text-gray-400 mt-1 text-[10px] sm:text-base">Advanced Market Analysis</p>
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
+             {/* Network Status Added Here */}
+             <NetworkStatus />
+
              {showInstallButton && (
                 <button
                     onClick={handleInstallClick}
